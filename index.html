@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bet Tracker">
+<title>Bet Tracker</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body style="margin:0;padding:0">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const PlusCircle = ({size = 24}) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>);
+const TrendingUp = ({size = 24}) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>);
+const TrendingDown = ({size = 24}) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>);
+const DollarSign = ({size = 24}) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>);
+const Trophy = ({size = 24}) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>);
+const Calendar = ({size = 24}) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>);
+const Download = ({size = 24}) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>);
+
+function SportsBetTracker() {
+  const [bets, setBets] = useState([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [showImportForm, setShowImportForm] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [viewMode, setViewMode] = useState('all');
+  const [betView, setBetView] = useState('pending');
+  const [newBet, setNewBet] = useState({
+    sport: '', game: '', betType: '', amount: '', odds: '', status: 'pending',
+    date: new Date().toISOString().split('T')[0]
+  });
+
+  useEffect(() => { loadBets(); }, []);
+
+  const loadBets = async () => {
+    try {
+      const keys = Object.keys(localStorage).filter(key => key.startsWith('bet:'));
+      const loadedBets = keys.map(key => {
+        try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
+      }).filter(Boolean);
+      setBets(loadedBets.sort((a, b) => new Date(b.date) - new Date(a.date)));
+    } catch (error) { console.log('No bets found yet'); }
+  };
+
+  const saveBet = async (bet) => {
+    try { localStorage.setItem(`bet:${bet.id}`, JSON.stringify(bet)); } 
+    catch (error) { console.error('Error saving bet:', error); }
+  };
+
+  const addBet = async (e) => {
+    if (e) e.preventDefault();
+    if (!newBet.sport || !newBet.game || !newBet.betType || !newBet.amount) {
+      alert('Please fill in all required fields'); return;
+    }
+    const bet = { ...newBet, id: Date.now().toString(), amount: parseFloat(newBet.amount), odds: newBet.odds || 'N/A' };
+    await saveBet(bet);
+    setBets(prevBets => [bet, ...prevBets]);
+    setNewBet({ sport: '', game: '', betType: '', amount: '', odds: '', status: 'pending', date: new Date().toISOString().split('T')[0] });
+    setShowAddForm(false);
+  };
+
+  const updateBetStatus = async (betId, status, payout = 0) => {
+    const updatedBets = bets.map(bet => {
+      if (bet.id === betId) {
+        const updated = { ...bet, status, payout: parseFloat(payout) || 0 };
+        saveBet(updated);
+        return updated;
+      }
+      return bet;
+    });
+    setBets(updatedBets);
+  };
+
+  const deleteBet = async (betId) => {
+    console.log('Delete button clicked for bet:', betId);
+    try {
+      localStorage.removeItem(`bet:${betId}`);
+      setBets(prevBets => prevBets.filter(bet => bet.id !== betId));
+      console.log('Bet deleted successfully');
+    } catch (error) { console.error('Error deleting bet:', error); }
+  };
+
+  const parseImportedBets = (text) => {
+    const parsedBets = [];
+    const isPendingFormat = text.includes('TICKET #');
+    
+    if (isPendingFormat) {
+      const tickets = text.split('TICKET #');
+      tickets.forEach((ticket, index) => {
+        if (index === 0) return;
+        try {
+          const ticketMatch = ticket.match(/(\d+)/);
+          const ticketNum = ticketMatch ? ticketMatch[1] : 'Unknown';
+          const dateMatch = ticket.match(/(\d{2}-\d{2}-\d{2})/);
+          let date = new Date().toISOString().split('T')[0];
+          if (dateMatch) {
+            const [month, day, year] = dateMatch[1].split('-');
+            date = `20${year}-${month}-${day}`;
+          }
+          const amountMatch = ticket.match(/\$(\d+)\/(\d+)/);
+          const amount = amountMatch ? parseFloat(amountMatch[1]) : 0;
+          const potentialWin = amountMatch ? parseFloat(amountMatch[2]) : 0;
+          console.log('Parsed amounts:', { amount, potentialWin, ticket: ticketNum });
+          const gameMatch = ticket.match(/\[([^\]]+)\]\s*-\s*\[(\d+)\]\s*([^\n(]+)/);
+          const sport = gameMatch ? gameMatch[1] : 'Unknown';
+          let betType = gameMatch ? gameMatch[3].trim() : 'Unknown';
+          const teamMatch = betType.match(/^(.+?)(?:\s+[-+]|\s+[ou])/i);
+          const game = teamMatch ? teamMatch[1].trim() : betType.split(/[-+]/)[0].trim();
+          const bet = {
+            id: `pending-${ticketNum}-${Date.now()}`, sport, game, betType, amount,
+            odds: 'Pending', status: 'pending', payout: 0, potentialWin, ticketNum, date
+          };
+          console.log('Created bet:', bet);
+          parsedBets.push(bet);
+        } catch (error) { console.error('Error parsing pending ticket:', error); }
+      });
+    } else {
+      const transactions = text.split('Transaction #');
+      transactions.forEach((transaction, index) => {
+        if (index === 0) return;
+        try {
+          const dateMatch = transaction.match(/(\d{2}\/\d{2}\/\d{4})/);
+          const date = dateMatch ? new Date(dateMatch[1]).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+          const gameMatch = transaction.match(/\[([^\]]+)\]-\[(\d+)\]\s+([^\n]+?)(?:-\d+|EV)/);
+          const sport = gameMatch ? gameMatch[1] : 'Unknown';
+          let game = gameMatch ? gameMatch[3].trim() : 'Unknown';
+          game = game.replace(/TOTAL\s+[ou]\d+½?EV\s*\(/, '').replace(/\).*$/, '').trim();
+          if (!game || game === '') game = gameMatch ? gameMatch[3].trim().split('(')[0].trim() : 'Unknown';
+          const betTypeMatch = transaction.match(/\]\s+(.+?)(?:\(Score:|$)/);
+          let betType = betTypeMatch ? betTypeMatch[1].trim() : 'Unknown';
+          betType = betType.split('\n')[0].trim();
+          const statusMatch = transaction.match(/Status\s+(WON|LOST|PENDING)/);
+          const status = statusMatch ? statusMatch[1].toLowerCase() : 'pending';
+          const riskMatch = transaction.match(/Risk\s*\/\s*Win\s*\$\s*(\d+)/);
+          const amount = riskMatch ? parseFloat(riskMatch[1]) : 0;
+          const winLossMatch = transaction.match(/Win\s*\/\s*Loss\s*\$\s*(-?\d+)/);
+          const winLoss = winLossMatch ? parseFloat(winLossMatch[1]) : 0;
+          let payout = 0;
+          if (status === 'won') payout = amount + winLoss;
+          const bet = {
+            id: `import-${Date.now()}-${index}`, sport, game, betType, amount,
+            odds: 'Imported', status, payout, date
+          };
+          parsedBets.push(bet);
+        } catch (error) { console.error('Error parsing transaction:', error); }
+      });
+    }
+    return parsedBets;
+  };
+
+  const importBets = async () => {
+    if (!importText.trim()) { alert('Please paste your betting log'); return; }
+    const parsedBets = parseImportedBets(importText);
+    if (parsedBets.length === 0) {
+      alert('No bets found in the text. Please make sure you copied the entire log.'); return;
+    }
+    for (const bet of parsedBets) await saveBet(bet);
+    setBets(prevBets => [...parsedBets, ...prevBets].sort((a, b) => new Date(b.date) - new Date(a.date)));
+    setImportText(''); setShowImportForm(false);
+    alert(`Successfully imported ${parsedBets.length} bets!`);
+  };
+
+  const exportToExcel = () => {
+    if (bets.length === 0) { alert('No bets to export!'); return; }
+    const excelData = bets.map(bet => ({
+      'Date': bet.date, 'Sport': bet.sport, 'Game': bet.game, 'Bet Type': bet.betType,
+      'Amount': bet.amount, 'Odds': bet.odds, 'Status': bet.status.toUpperCase(),
+      'Payout': bet.payout || 0,
+      'Profit/Loss': bet.status === 'won' ? (bet.payout - bet.amount).toFixed(2) : 
+                     bet.status === 'lost' ? (-bet.amount).toFixed(2) : '0.00'
+    }));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 10 }, { wch: 30 }, { wch: 20 }, { wch: 10 },
+      { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, 'Betting History');
+    const filename = `betting-history-${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, filename);
+  };
+
+  const getFilteredBets = () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayString = today.toISOString().split('T')[0];
+    let timeBets;
+    switch(viewMode) {
+      case 'daily':
+        timeBets = bets.filter(bet => bet.date === todayString);
+        break;
+      case 'weekly':
+        const weekAgo = new Date(today);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        timeBets = bets.filter(bet => new Date(bet.date) >= weekAgo);
+        break;
+      case 'monthly':
+        const monthAgo = new Date(today);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        timeBets = bets.filter(bet => new Date(bet.date) >= monthAgo);
+        break;
+      default:
+        timeBets = bets;
+    }
+    if (betView === 'pending') return timeBets.filter(bet => bet.status === 'pending');
+    else return timeBets.filter(bet => bet.status === 'won' || bet.status === 'lost');
+  };
+
+  const filteredBets = getFilteredBets();
+  const completedBets = bets.filter(bet => bet.status === 'won' || bet.status === 'lost');
+  const stats = completedBets.reduce((acc, bet) => {
+    if (bet.status === 'won') {
+      acc.wins++; acc.totalProfit += (bet.payout || 0) - bet.amount;
+    } else if (bet.status === 'lost') {
+      acc.losses++; acc.totalProfit -= bet.amount;
+    }
+    acc.totalWagered += bet.amount;
+    return acc;
+  }, { wins: 0, losses: 0, totalProfit: 0, totalWagered: 0 });
+
+  const winRate = stats.wins + stats.losses > 0 ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1) : 0;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-4 pb-20">
+      <div className="max-w-2xl mx-auto">
+        <div className="text-center mb-6 pt-4">
+          <h1 className="text-3xl font-bold mb-2 flex items-center justify-center gap-2">
+            <Trophy size={32} className="text-yellow-400" />
+            Bet Tracker
+          </h1>
+          <p className="text-slate-400">Track your sports betting performance</p>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2 mb-6 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
+          <button onClick={() => setViewMode('daily')} className={`py-3 px-4 rounded-lg font-semibold transition-all ${viewMode === 'daily' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'}`}>Today</button>
+          <button onClick={() => setViewMode('weekly')} className={`py-3 px-4 rounded-lg font-semibold transition-all ${viewMode === 'weekly' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'}`}>Week</button>
+          <button onClick={() => setViewMode('monthly')} className={`py-3 px-4 rounded-lg font-semibold transition-all ${viewMode === 'monthly' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'}`}>Month</button>
+          <button onClick={() => setViewMode('all')} className={`py-3 px-4 rounded-lg font-semibold transition-all ${viewMode === 'all' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'}`}>All</button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700">
+            <div className="flex items-center gap-2 mb-2"><TrendingUp className="text-green-400" size={20} /><span className="text-sm text-slate-400">Wins</span></div>
+            <div className="text-2xl font-bold text-green-400">{stats.wins}</div>
+          </div>
+          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700">
+            <div className="flex items-center gap-2 mb-2"><TrendingDown className="text-red-400" size={20} /><span className="text-sm text-slate-400">Losses</span></div>
+            <div className="text-2xl font-bold text-red-400">{stats.losses}</div>
+          </div>
+          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700">
+            <div className="flex items-center gap-2 mb-2"><DollarSign className="text-blue-400" size={20} /><span className="text-sm text-slate-400">Profit/Loss</span></div>
+            <div className={`text-2xl font-bold ${stats.totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>${stats.totalProfit.toFixed(2)}</div>
+          </div>
+          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700">
+            <div className="flex items-center gap-2 mb-2"><Trophy className="text-yellow-400" size={20} /><span className="text-sm text-slate-400">Win Rate</span></div>
+            <div className="text-2xl font-bold text-yellow-400">{winRate}%</div>
+          </div>
+          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700">
+            <div className="flex items-center gap-2 mb-2"><DollarSign className="text-purple-400" size={20} /><span className="text-sm text-slate-400">Total Wagered</span></div>
+            <div className="text-2xl font-bold text-purple-400">${stats.totalWagered.toFixed(0)}</div>
+          </div>
+          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700 col-span-2">
+            <div className="flex items-center gap-2 mb-2"><TrendingUp className="text-cyan-400" size={20} /><span className="text-sm text-slate-400">ROI</span></div>
+            <div className={`text-2xl font-bold ${stats.totalWagered > 0 && (stats.totalProfit / stats.totalWagered * 100) >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>
+              {stats.totalWagered > 0 ? ((stats.totalProfit / stats.totalWagered) * 100).toFixed(1) : '0.0'}%
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <button onClick={() => { setShowAddForm(!showAddForm); setShowImportForm(false); }} className="bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-semibold py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg">
+            <PlusCircle size={24} />Add Bet
+          </button>
+          <button onClick={() => { setShowImportForm(!showImportForm); setShowAddForm(false); }} className="bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white font-semibold py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg">
+            <Calendar size={24} />Import Log
+          </button>
+        </div>
+
+        <button onClick={exportToExcel} className="w-full bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white font-semibold py-3 px-6 rounded-xl mb-6 flex items-center justify-center gap-2 transition-all shadow-lg">
+          <Download size={20} />Export to Excel
+        </button>
+
+        {showAddForm && (
+          <div className="bg-slate-800/70 backdrop-blur rounded-xl p-5 mb-6 border border-slate-700">
+            <h2 className="text-xl font-bold mb-4">New Bet</h2>
+            <div className="space-y-3">
+              <input type="text" placeholder="Sport (e.g., NBA, NFL, Soccer)" value={newBet.sport} onChange={(e) => setNewBet({...newBet, sport: e.target.value})} className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" />
+              <input type="text" placeholder="Game/Match (e.g., Lakers vs Celtics)" value={newBet.game} onChange={(e) => setNewBet({...newBet, game: e.target.value})} className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" />
+              <input type="text" placeholder="Bet Type (e.g., Moneyline, Spread -5.5)" value={newBet.betType} onChange={(e) => setNewBet({...newBet, betType: e.target.value})} className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" />
+              <input type="number" step="0.01" placeholder="Bet Amount ($)" value={newBet.amount} onChange={(e) => setNewBet({...newBet, amount: e.target.value})} className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" />
+              <input type="text" placeholder="Odds (e.g., +150, -200)" value={newBet.odds} onChange={(e) => setNewBet({...newBet, odds: e.target.value})} className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" />
+              <input type="date" value={newBet.date} onChange={(e) => setNewBet({...newBet, date: e.target.value})} className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500" />
+            </div>
+            <button onClick={addBet} className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg mt-4 transition-all">Save Bet</button>
+          </div>
+        )}
+
+        {showImportForm && (
+          <div className="bg-slate-800/70 backdrop-blur rounded-xl p-5 mb-6 border border-slate-700">
+            <h2 className="text-xl font-bold mb-2">Import Betting Log</h2>
+            <p className="text-sm text-slate-400 mb-4">Paste your entire betting log below (copy everything from your sportsbook)</p>
+            <textarea value={importText} onChange={(e) => setImportText(e.target.value)} placeholder="Paste your betting log here..." className="w-full h-64 bg-slate-900/50 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-purple-500 font-mono text-sm" />
+            <button onClick={importBets} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg mt-4 transition-all">Import Bets</button>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div className="flex gap-2 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
+            <button onClick={() => setBetView('pending')} className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${betView === 'pending' ? 'bg-yellow-600 text-white shadow-lg' : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'}`}>
+              Pending ({bets.filter(b => b.status === 'pending').length})
+            </button>
+            <button onClick={() => setBetView('completed')} className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${betView === 'completed' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'}`}>
+              Completed ({bets.filter(b => b.status === 'won' || b.status === 'lost').length})
+            </button>
+          </div>
+
+          {filteredBets.length === 0 ? (
+            <div className="text-center py-12 text-slate-400">
+              <Trophy size={48} className="mx-auto mb-3 opacity-30" />
+              <p>{betView === 'pending' ? 'No pending bets. Import some or add manually!' : 'No completed bets yet. Mark some pending bets as won/lost!'}</p>
+            </div>
+          ) : (
+            filteredBets.map(bet => (
+              <div key={bet.id} className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-semibold text-blue-400 bg-blue-400/10 px-2 py-1 rounded">{bet.sport}</span>
+                      {bet.status === 'won' && <span className="text-xs font-semibold text-green-400 bg-green-400/10 px-2 py-1 rounded">WON</span>}
+                      {bet.status === 'lost' && <span className="text-xs font-semibold text-red-400 bg-red-400/10 px-2 py-1 rounded">LOST</span>}
+                      {bet.status === 'pending' && <span className="text-xs font-semibold text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded">PENDING</span>}
+                    </div>
+                    <h3 className="font-semibold text-white">{bet.game}</h3>
+                    <p className="text-sm text-slate-400">{bet.betType}</p>
+                    <div className="flex items-center gap-3 mt-2 text-sm">
+                      <span className="text-slate-300">Bet: ${bet.amount}</span>
+                      {bet.potentialWin && bet.status === 'pending' && <span className="text-green-400">To Win: ${bet.potentialWin}</span>}
+                      {!bet.potentialWin && <span className="text-slate-400">Odds: {bet.odds}</span>}
+                      <span className="text-slate-500 flex items-center gap-1">
+                        <Calendar size={14} />
+                        {new Date(bet.date).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {bet.status === 'pending' && (
+                  <div className="mt-3 pt-3 border-t border-slate-700">
+                    {bet.potentialWin ? (
+                      <div className="mb-3 bg-slate-900/50 border border-slate-600 rounded-lg px-3 py-2">
+                        <div className="text-xs text-slate-400 mb-1">Expected Payout</div>
+                        <div className="text-lg font-semibold text-green-400">${(bet.amount + bet.potentialWin).toFixed(2)}</div>
+                        <div className="text-xs text-slate-500 mt-1">(Risk: ${bet.amount} + Win: ${bet.potentialWin})</div>
+                      </div>
+                    ) : (
+                      <div className="mb-3">
+                        <label className="text-xs text-slate-400 block mb-1">Payout Amount</label>
+                        <input type="number" step="0.01" placeholder="Enter payout amount" className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500" id={`payout-${bet.id}`} />
+                      </div>
+                    )}
+                    <div className="flex gap-2 mb-2">
+                      <button onClick={() => {
+                        let payout;
+                        if (bet.potentialWin && bet.potentialWin > 0) {
+                          payout = bet.amount + bet.potentialWin;
+                          console.log('Using potentialWin:', bet.potentialWin, 'Total payout:', payout);
+                        } else {
+                          const payoutInput = document.getElementById(`payout-${bet.id}`);
+                          if (payoutInput) payout = parseFloat(payoutInput.value);
+                          if (!payout || payout <= 0) payout = bet.amount;
+                        }
+                        console.log('Marking as won with payout:', payout);
+                        updateBetStatus(bet.id, 'won', payout);
+                      }} className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded-lg text-sm font-semibold transition-all shadow-lg">✓ Won</button>
+                      <button onClick={() => {
+                        console.log('Marking as lost');
+                        updateBetStatus(bet.id, 'lost', 0);
+                      }} className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg text-sm font-semibold transition-all shadow-lg">✗ Lost</button>
+                    </div>
+                    <button onClick={(e) => {
+                      e.preventDefault(); e.stopPropagation();
+                      if (window.confirm('Are you sure you want to delete this pending bet?')) deleteBet(bet.id);
+                    }} className="w-full text-slate-400 hover:text-red-400 text-sm font-semibold transition-all py-2 rounded hover:bg-red-400/10">Delete Bet</button>
+                  </div>
+                )}
+
+                {bet.status !== 'pending' && (
+                  <div className="mt-3 pt-3 border-t border-slate-700 flex justify-between items-center">
+                    {bet.status === 'won' && <span className="text-green-400 font-semibold">Profit: +${(bet.payout - bet.amount).toFixed(2)}</span>}
+                    {bet.status === 'lost' && <span className="text-red-400 font-semibold">Loss: -${bet.amount.toFixed(2)}</span>}
+                    <button onClick={(e) => {
+                      e.preventDefault(); e.stopPropagation();
+                      if (window.confirm('Are you sure you want to delete this bet?')) deleteBet(bet.id);
+                    }} className="text-slate-400 hover:text-red-400 text-sm font-semibold transition-all px-3 py-1 rounded hover:bg-red-400/10">Delete</button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<SportsBetTracker />);
+</script>
+</body>
+</html>
