@@ -89,72 +89,182 @@ function SportsBetTracker() {
   };
 
   const parseImportedBets = (text) => {
-    const parsedBets = [];
-    const isPendingFormat = text.includes('TICKET #');
+  const parsedBets = [];
+  
+  // Check format type
+  const isPendingFormat = text.includes('TICKET #');
+  const isTransactionFormat = text.includes('Transaction #');
+  const isSimpleResultFormat = !isPendingFormat && !isTransactionFormat && (text.includes('+$') || text.includes('-$'));
+  
+  if (isSimpleResultFormat) {
+    // NEW FORMAT: Simple results with +/- amounts
+    const lines = text.split('\n').filter(line => line.trim());
     
-    if (isPendingFormat) {
-      const tickets = text.split('TICKET #');
-      tickets.forEach((ticket, index) => {
-        if (index === 0) return;
-        try {
-          const ticketMatch = ticket.match(/(\d+)/);
-          const ticketNum = ticketMatch ? ticketMatch[1] : 'Unknown';
-          const dateMatch = ticket.match(/(\d{2}-\d{2}-\d{2})/);
-          let date = new Date().toISOString().split('T')[0];
-          if (dateMatch) {
-            const [month, day, year] = dateMatch[1].split('-');
-            date = `20${year}-${month}-${day}`;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      try {
+        // Parse line like: "S Illinois -1 -110" or "Arizona/KansasU 154 -110"
+        // Followed by result line like: "+$50" or "-$55"
+        
+        // Check if this is a bet line (not a result line)
+        if (line.startsWith('+$') || line.startsWith('-$')) continue;
+        
+        // Get the result from next line
+        let result = '';
+        let amount = 0;
+        let status = 'pending';
+        let payout = 0;
+        
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim();
+          if (nextLine.startsWith('+$') || nextLine.startsWith('-$')) {
+            result = nextLine;
+            const resultMatch = result.match(/([+-])\$(\d+)/);
+            if (resultMatch) {
+              const isWin = resultMatch[1] === '+';
+              const resultAmount = parseFloat(resultMatch[2]);
+              
+              // Assuming standard bet of $55 (or $50 based on result)
+              // If won $50, bet was likely $55 at -110 odds
+              // If lost $55, bet was $55
+              if (isWin) {
+                amount = 55; // Standard bet at -110
+                payout = amount + resultAmount;
+                status = 'won';
+              } else {
+                amount = resultAmount;
+                status = 'lost';
+                payout = 0;
+              }
+            }
+            i++; // Skip the result line in next iteration
           }
-          const amountMatch = ticket.match(/\$(\d+)\/(\d+)/);
-          const amount = amountMatch ? parseFloat(amountMatch[1]) : 0;
-          const potentialWin = amountMatch ? parseFloat(amountMatch[2]) : 0;
-          console.log('Parsed amounts:', { amount, potentialWin, ticket: ticketNum });
-          const gameMatch = ticket.match(/\[([^\]]+)\]\s*-\s*\[(\d+)\]\s*([^\n(]+)/);
-          const sport = gameMatch ? gameMatch[1] : 'Unknown';
-          let betType = gameMatch ? gameMatch[3].trim() : 'Unknown';
-          const teamMatch = betType.match(/^(.+?)(?:\s+[-+]|\s+[ou])/i);
-          const game = teamMatch ? teamMatch[1].trim() : betType.split(/[-+]/)[0].trim();
+        }
+        
+        // Parse the bet line
+        let game = '';
+        let betType = '';
+        let odds = '';
+        let sport = 'CBB'; // Default to college basketball
+        
+        // Extract odds (last part with -)
+        const oddsMatch = line.match(/(-\d+)$/);
+        if (oddsMatch) {
+          odds = oddsMatch[1];
+          const betInfo = line.substring(0, line.lastIndexOf(oddsMatch[1])).trim();
+          
+          // Check if it's a total (has O or U and number)
+          const totalMatch = betInfo.match(/(.+?)[OU]\s*(\d+)/);
+          if (totalMatch) {
+            game = totalMatch[1].trim().replace('/', ' vs ');
+            const totalNum = totalMatch[2];
+            const overUnder = betInfo.includes('O') ? 'Over' : 'Under';
+            betType = `${overUnder} ${totalNum}`;
+          } else {
+            // It's a spread or moneyline
+            const spreadMatch = betInfo.match(/(.+?)\s+([-+]\d+½?)/);
+            if (spreadMatch) {
+              game = spreadMatch[1].trim();
+              betType = `Spread ${spreadMatch[2]}`;
+            } else {
+              // No spread, just team name
+              game = betInfo.trim();
+              betType = 'Moneyline';
+            }
+          }
+        }
+        
+        if (game && amount > 0) {
           const bet = {
-            id: `pending-${ticketNum}-${Date.now()}`, sport, game, betType, amount,
-            odds: 'Pending', status: 'pending', payout: 0, potentialWin, ticketNum, date
+            id: `import-simple-${Date.now()}-${i}`,
+            sport,
+            game,
+            betType: `${betType} ${odds}`,
+            amount,
+            odds,
+            status,
+            payout,
+            date: new Date().toISOString().split('T')[0] // Default to today
           };
-          console.log('Created bet:', bet);
+          
+          console.log('Parsed simple format bet:', bet);
           parsedBets.push(bet);
-        } catch (error) { console.error('Error parsing pending ticket:', error); }
-      });
-    } else {
-      const transactions = text.split('Transaction #');
-      transactions.forEach((transaction, index) => {
-        if (index === 0) return;
-        try {
-          const dateMatch = transaction.match(/(\d{2}\/\d{2}\/\d{4})/);
-          const date = dateMatch ? new Date(dateMatch[1]).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-          const gameMatch = transaction.match(/\[([^\]]+)\]-\[(\d+)\]\s+([^\n]+?)(?:-\d+|EV)/);
-          const sport = gameMatch ? gameMatch[1] : 'Unknown';
-          let game = gameMatch ? gameMatch[3].trim() : 'Unknown';
-          game = game.replace(/TOTAL\s+[ou]\d+½?EV\s*\(/, '').replace(/\).*$/, '').trim();
-          if (!game || game === '') game = gameMatch ? gameMatch[3].trim().split('(')[0].trim() : 'Unknown';
-          const betTypeMatch = transaction.match(/\]\s+(.+?)(?:\(Score:|$)/);
-          let betType = betTypeMatch ? betTypeMatch[1].trim() : 'Unknown';
-          betType = betType.split('\n')[0].trim();
-          const statusMatch = transaction.match(/Status\s+(WON|LOST|PENDING)/);
-          const status = statusMatch ? statusMatch[1].toLowerCase() : 'pending';
-          const riskMatch = transaction.match(/Risk\s*\/\s*Win\s*\$\s*(\d+)/);
-          const amount = riskMatch ? parseFloat(riskMatch[1]) : 0;
-          const winLossMatch = transaction.match(/Win\s*\/\s*Loss\s*\$\s*(-?\d+)/);
-          const winLoss = winLossMatch ? parseFloat(winLossMatch[1]) : 0;
-          let payout = 0;
-          if (status === 'won') payout = amount + winLoss;
-          const bet = {
-            id: `import-${Date.now()}-${index}`, sport, game, betType, amount,
-            odds: 'Imported', status, payout, date
-          };
-          parsedBets.push(bet);
-        } catch (error) { console.error('Error parsing transaction:', error); }
-      });
+        }
+      } catch (error) {
+        console.error('Error parsing simple format line:', error, line);
+      }
     }
-    return parsedBets;
-  };
+  }
+  else if (isPendingFormat) {
+    // EXISTING FORMAT 1: Pending bets with TICKET #
+    const tickets = text.split('TICKET #');
+    tickets.forEach((ticket, index) => {
+      if (index === 0) return;
+      try {
+        const ticketMatch = ticket.match(/(\d+)/);
+        const ticketNum = ticketMatch ? ticketMatch[1] : 'Unknown';
+        const dateMatch = ticket.match(/(\d{2}-\d{2}-\d{2})/);
+        let date = new Date().toISOString().split('T')[0];
+        if (dateMatch) {
+          const [month, day, year] = dateMatch[1].split('-');
+          date = `20${year}-${month}-${day}`;
+        }
+        const amountMatch = ticket.match(/\$(\d+)\/(\d+)/);
+        const amount = amountMatch ? parseFloat(amountMatch[1]) : 0;
+        const potentialWin = amountMatch ? parseFloat(amountMatch[2]) : 0;
+        console.log('Parsed amounts:', { amount, potentialWin, ticket: ticketNum });
+        const gameMatch = ticket.match(/\[([^\]]+)\]\s*-\s*\[(\d+)\]\s*([^\n(]+)/);
+        const sport = gameMatch ? gameMatch[1] : 'Unknown';
+        let betType = gameMatch ? gameMatch[3].trim() : 'Unknown';
+        const teamMatch = betType.match(/^(.+?)(?:\s+[-+]|\s+[ou])/i);
+        const game = teamMatch ? teamMatch[1].trim() : betType.split(/[-+]/)[0].trim();
+        const bet = {
+          id: `pending-${ticketNum}-${Date.now()}`, sport, game, betType, amount,
+          odds: 'Pending', status: 'pending', payout: 0, potentialWin, ticketNum, date
+        };
+        console.log('Created bet:', bet);
+        parsedBets.push(bet);
+      } catch (error) { console.error('Error parsing pending ticket:', error); }
+    });
+  }
+  else if (isTransactionFormat) {
+    // EXISTING FORMAT 2: Settled transactions
+    const transactions = text.split('Transaction #');
+    transactions.forEach((transaction, index) => {
+      if (index === 0) return;
+      try {
+        const dateMatch = transaction.match(/(\d{2}\/\d{2}\/\d{4})/);
+        const date = dateMatch ? new Date(dateMatch[1]).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+        const gameMatch = transaction.match(/\[([^\]]+)\]-\[(\d+)\]\s+([^\n]+?)(?:-\d+|EV)/);
+        const sport = gameMatch ? gameMatch[1] : 'Unknown';
+        let game = gameMatch ? gameMatch[3].trim() : 'Unknown';
+        game = game.replace(/TOTAL\s+[ou]\d+½?EV\s*\(/, '').replace(/\).*$/, '').trim();
+        if (!game || game === '') game = gameMatch ? gameMatch[3].trim().split('(')[0].trim() : 'Unknown';
+        const betTypeMatch = transaction.match(/\]\s+(.+?)(?:\(Score:|$)/);
+        let betType = betTypeMatch ? betTypeMatch[1].trim() : 'Unknown';
+        betType = betType.split('\n')[0].trim();
+        const statusMatch = transaction.match(/Status\s+(WON|LOST|PENDING)/);
+        const status = statusMatch ? statusMatch[1].toLowerCase() : 'pending';
+        const riskMatch = transaction.match(/Risk\s*\/\s*Win\s*\$\s*(\d+)/);
+        const amount = riskMatch ? parseFloat(riskMatch[1]) : 0;
+        const winLossMatch = transaction.match(/Win\s*\/\s*Loss\s*\$\s*(-?\d+)/);
+        const winLoss = winLossMatch ? parseFloat(winLossMatch[1]) : 0;
+        let payout = 0;
+        if (status === 'won') payout = amount + winLoss;
+        const bet = {
+          id: `import-${Date.now()}-${index}`, sport, game, betType, amount,
+          odds: 'Imported', status, payout, date
+        };
+        parsedBets.push(bet);
+      } catch (error) { console.error('Error parsing transaction:', error); }
+    });
+  }
+  
+  return parsedBets;
+};
+
 
   const importBets = async () => {
     if (!importText.trim()) { alert('Please paste your betting log'); return; }
